@@ -11,7 +11,7 @@ public class City {
     private final Intersection[][] intersections;
 
     //Lista de todas las calles
-    private  final List<Street> streets;
+    private final List<Street> streets;
 
     public City() {
         this.intersections = new Intersection[SIZE][SIZE];
@@ -55,9 +55,19 @@ public class City {
                 if (row + 1 < SIZE) {
                     Position from = new Position(row, col);
                     Position to = new Position(row + 1, col);
-                    Street.Direction dir = (col % 2 == 0)
-                            ? Street.Direction.TWO_WAY
-                            : Street.Direction.ONE_WAY;
+
+                    Street.Direction dir;
+                    if (col % 2 == 0) {
+                        //Columnas pares: doble sentido
+                        dir = Street.Direction.TWO_WAY;
+                    } else {
+                        // Columnas impares alternan: pares van abajo, impares van a arriba
+                        // Esto evita que haya callejones sin salida
+                        dir = (col % 4 == 1)
+                                ? Street.Direction.ONE_WAY // col 1,5,9: de arriba hacia abajo
+                                : Street.Direction.TWO_WAY; // col 3,7,11: doble sentido
+                    }
+
                     streets.add(new Street("Calle V-" + row + "-" + col, from, to, dir));
                 }
             }
