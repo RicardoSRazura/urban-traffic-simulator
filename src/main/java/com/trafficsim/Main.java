@@ -3,11 +3,6 @@ package com.trafficsim;
 import com.trafficsim.config.SimulationConfig;
 import com.trafficsim.controller.SimulationController;
 import com.trafficsim.controller.SimulationState;
-import com.trafficsim.model.City;
-import com.trafficsim.model.Intersection;
-import com.trafficsim.model.Position;
-
-import java.util.List;
 
 public class Main {
     public static void main(String[] args) throws InterruptedException {
@@ -64,7 +59,7 @@ public class Main {
         System.out.printf("[INFO] A* secuencial : %d ms%n",
                 controller.getMetrics().getSequentialRouteTime());
         System.out.printf("[INFO] A* paralelo   : %d ms%n",
-                controller.getMetrics().getParallelRoutime());
+                controller.getMetrics().getParallelRouteTime());
         System.out.printf("[INFO] Speedup       : %.2fx%n\n",
                 controller.getMetrics().getSpeedup());
 
@@ -109,7 +104,7 @@ public class Main {
         System.out.printf("A* secuencial        : %d ms%n",
                 controller.getMetrics().getSequentialRouteTime());
         System.out.printf("A* paralelo          : %d ms%n",
-                controller.getMetrics().getParallelRoutime());
+                controller.getMetrics().getParallelRouteTime());
         System.out.printf("Speedup              : %.2fx%n",
                 controller.getMetrics().getSpeedup());
         System.out.println("===========================================");

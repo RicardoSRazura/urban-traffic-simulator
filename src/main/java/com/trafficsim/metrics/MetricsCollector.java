@@ -69,7 +69,7 @@ public class MetricsCollector {
         this.sequentialRouteTime = sequentialRouteTime;
     }
 
-    public long getParallelRoutime() {
+    public long getParallelRouteTime() {
         return parallelRoutime;
     }
 
