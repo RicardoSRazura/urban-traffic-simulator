@@ -304,7 +304,7 @@ public class SimulationController {
         System.out.printf("Cálculo secuencial    : %d ms%n",
                 metrics.getSequentialRouteTime());
         System.out.printf("Cálculo paralelo      : %d ms%n",
-                metrics.getParallelRoutime());
+                metrics.getParallelRouteTime());
         System.out.printf("Speedup               : %.2fx%n",
                 metrics.getSpeedup());
         System.out.println("===========================\n");
