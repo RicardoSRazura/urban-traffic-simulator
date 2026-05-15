@@ -181,7 +181,7 @@ public class VehicleThread extends Thread {
         return currentPosition;
     }
 
-    public VehicleState getVeichleState() {
+    public VehicleState getVehicleState() {
         return state;
     }
 
