@@ -16,34 +16,23 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class SimulationController {
 
-    // ---- Componentes principales ----
+    // ── Componentes principales ──────────────────────────────────────────────
     private final City city;
     private final SimulationConfig config;
     private final MetricsCollector metrics;
     private final RouteCalculator routeCalculator;
 
-    // ---- Hilos activos ----
-    // CopyOnWriteArrayList: thread-safe para lectura desde la GUI
-    // mientras el controlador agrega/elimina hilos
+    // ── Hilos activos ────────────────────────────────────────────────────────
     private final CopyOnWriteArrayList<TrafficLightThread> lightThreads;
     private final CopyOnWriteArrayList<VehicleThread> vehicleThreads;
 
-    // ---- Estado de la simulacion ----
+    // ── Estado ───────────────────────────────────────────────────────────────
     private volatile SimulationState state = SimulationState.IDLE;
-
-    // Pausa: todos los vehiculos consultan esta bandera antes de cada paso
     private volatile boolean paused = false;
-
-    // Contador de vehiculos que han llegado al destino
     private final AtomicInteger arrivedCount = new AtomicInteger(0);
-
-    // Semilla para reproducibilidad - mismo valor = mismas posiciones aleatorias
     private final Random random = new Random(42);
 
-
-    // Listener para notificar a la GUI de cambios de estado ----
-    // La GUI implementa esta interfaz para saber cuando redibujar o
-    // actualizar metricas sin necesidad de polling constante
+    // ── Listener para la GUI ─────────────────────────────────────────────────
     public interface SimulationListener {
         void onStateChanged(SimulationState newState);
         void onVehicleArrived(int vehicleId, long travelTimeMs);
@@ -52,96 +41,92 @@ public class SimulationController {
 
     private SimulationListener listener;
 
-    // ---- Constructor ----
-
+    // ── Constructor ──────────────────────────────────────────────────────────
 
     public SimulationController(SimulationConfig config) {
-        this.config = config;
-        this.city = new City();
-        this.metrics = new MetricsCollector();
+        this.config          = config;
+        this.city            = new City();
+        this.metrics         = new MetricsCollector();
         this.routeCalculator = new RouteCalculator(city);
-        this.lightThreads = new CopyOnWriteArrayList<>();
-        this.vehicleThreads = new CopyOnWriteArrayList<>();
+        this.lightThreads    = new CopyOnWriteArrayList<>();
+        this.vehicleThreads  = new CopyOnWriteArrayList<>();
     }
 
     public void setListener(SimulationListener listener) {
         this.listener = listener;
     }
 
-    // ---- Paso 1 - initialize()
-    // Prepara la ciudad y calcula rutas. Se llama antes de start().
-    // Se corre en un hilo separado para no bloquear la GUI mientras
-    // A* calcula todas las rutas
+    // ── Paso 1: initialize() ─────────────────────────────────────────────────
+
     public void initialize() {
         setState(SimulationState.CALCULATING);
 
-        // Hilo separado para no congelar la GUI durante el calculo
         Thread initThread = new Thread(() -> {
-            //1a. Asignar semaforos a las intersecciones principales
+
+            // 1a. Asignar semaforos
             List<Position> semaphorePositions = city.getDefaultSemaphorePositions();
             city.assignSemaphores(semaphorePositions);
 
-            //1b. Crear los hilos de semaforo (uno por interseccion con semaforo)
+            // 1b. Crear hilos de semaforo
             for (Position pos : semaphorePositions) {
                 Intersection inter = city.getIntersection(pos);
                 TrafficLightThread lightThread = new TrafficLightThread(inter, config);
                 lightThreads.add(lightThread);
             }
 
-            //1c. Generar las peticiones de ruta para cada vehiculo
+            // 1c. Generar peticiones de ruta
             List<ParallelRouteTask.RouteRequest> requests = generateRouteRequests();
 
-            //1d. Calcular rutas secuencialmente (para medir tiempo base)
+            // 1d. Calcular rutas secuencial (para medir speedup)
             routeCalculator.calculateSequential(requests);
 
-            //1e. Calcular rutas en paralelo (las que usaran los vehiculos)
+            // 1e. Calcular rutas en paralelo (las que usan los vehiculos)
             List<List<Position>> routes = routeCalculator.calculateParallel(requests);
 
-            //1f. Guardar tiempos de calculo en metricas
+            // 1f. Guardar tiempos en metricas
             metrics.setSequentialRouteTime(routeCalculator.getLastSequentialTimeMs());
             metrics.setParallelRoutime(routeCalculator.getLastParallelTimeMs());
             metrics.setSpeedup(routeCalculator.getSpeedup());
 
-            //1g. Crear un VehicleThread por cada ruta valida calculada
+            // 1g. Crear VehicleThread por cada ruta valida
+            // Aqui pasamos config.getMoveDelayMs() para que la velocidad
+            // venga del slider de la GUI, no de una constante fija
             for (int i = 0; i < routes.size(); i++) {
                 final int vehicleId = i;
                 List<Position> route = routes.get(vehicleId);
 
-                // Si A* no encontro una ruta, omitimos ese vehiculo
-                if(route.isEmpty()) {
+                if (route.isEmpty()) {
                     System.err.println("Vehiculo " + vehicleId + " sin ruta - omitido");
                     continue;
                 }
 
-                // Agrega este print de diagnóstico:
                 System.out.printf("[RUTA] Vehículo #%d: %s --> %s  (%d pasos)%n",
                         vehicleId,
                         route.get(0),
                         route.get(route.size() - 1),
                         route.size());
 
-
                 VehicleThread vehicle = new VehicleThread(
                         vehicleId,
                         route,
                         city,
                         metrics,
-                        //Callback: cuando el vehiculo llega, notificamos al controlador
-                        () -> onVehicleArrived(vehicleId)
+                        () -> onVehicleArrived(vehicleId),
+                        config.getMoveDelayMs()  // <-- velocidad desde el slider
                 );
                 vehicleThreads.add(vehicle);
             }
 
-            // Listo para correr
             setState(SimulationState.IDLE);
+
         }, "Init-Thread");
 
         initThread.setDaemon(true);
         initThread.start();
     }
 
-    // Paso 2 - Start()
-    // Arranca todos los hilos. Solo valiudo si el estado es IDLE
+    // ── Paso 2: start() ──────────────────────────────────────────────────────
+
     public void start() {
         if (state != SimulationState.IDLE) {
             System.err.println("No se puede iniciar: estado actual = " + state);
@@ -151,77 +136,60 @@ public class SimulationController {
         arrivedCount.set(0);
         setState(SimulationState.RUNNING);
 
-        // Primero arrancamos los semaforos - deben estar corriendo
-        // antes de que los vehiculos intenten cruzar intersecciones
         for (TrafficLightThread light : lightThreads) {
             light.start();
         }
 
-        // Luego arrancamos los vehiculos
         for (VehicleThread vehicle : vehicleThreads) {
-            vehicle.setPaused(false); // Aseguramos que no arranquen pausados
+            vehicle.setPaused(false);
             vehicle.start();
         }
     }
 
-    // Paso 3a - pause()
-    // Congela los vehiculos en su posicion actual
-    // Los semaforos siguen corriendo, esto lo hace un poco mas realista
+    // ── Paso 3a: pause() ─────────────────────────────────────────────────────
+
     public void pause() {
         if (state != SimulationState.RUNNING) return;
-
         paused = true;
-        //Notificamos a cada vehiculo par que se detenga en el siguiente paso
         for (VehicleThread vehicle : vehicleThreads) {
             vehicle.setPaused(true);
         }
         setState(SimulationState.PAUSED);
     }
 
-    // Paso 3b - resume()
-    // Reanuda los vehiculos desde donde estaban
+    // ── Paso 3b: resume() ────────────────────────────────────────────────────
+
     public void resume() {
         if (state != SimulationState.PAUSED) return;
-
-        paused= false;
-        for(VehicleThread vehicle : vehicleThreads) {
+        paused = false;
+        for (VehicleThread vehicle : vehicleThreads) {
             vehicle.setPaused(false);
         }
         setState(SimulationState.RUNNING);
     }
 
-    // Paso 4 - stop()
-    // Interrumpe todos los hilos y limpia el estado
+    // ── Paso 4: stop() ───────────────────────────────────────────────────────
+
     public void stop() {
         setState(SimulationState.FINISHED);
-
-        // Interrumpimos vehiculos
-        for(VehicleThread vehicle : vehicleThreads) {
+        for (VehicleThread vehicle : vehicleThreads) {
             vehicle.interrupt();
         }
-
-        //Interrumpimos semaforos
-        for(TrafficLightThread light : lightThreads) {
+        for (TrafficLightThread light : lightThreads) {
             light.stopLight();
         }
     }
 
-    // Paso 5 - reset()
-    // Detiene todo y limpia para poder volver a initialize() + start()
+    // ── Paso 5: reset() ──────────────────────────────────────────────────────
+
     public void reset() {
         stop();
 
-        // Esperamos que todos los hilos terminen antes de limpiar
-        // join() con timeout par no bloqeuarnos indefinidamente
-        for (VehicleThread v: vehicleThreads) {
-            try {
-                v.join(500);
-            } catch (InterruptedException ignored) {}
+        for (VehicleThread v : vehicleThreads) {
+            try { v.join(500); } catch (InterruptedException ignored) {}
         }
         for (TrafficLightThread l : lightThreads) {
-            try {
-                l.join(500);
-            } catch (InterruptedException ignored) {}
+            try { l.join(500); } catch (InterruptedException ignored) {}
         }
 
         vehicleThreads.clear();
@@ -231,17 +199,16 @@ public class SimulationController {
         setState(SimulationState.IDLE);
     }
 
-    // Callback interno: llamado por cada VehicleThread al llegar al destino
+    // ── Callbacks internos ───────────────────────────────────────────────────
+
     private void onVehicleArrived(int vehicleId) {
         long travelTime = metrics.getTravelTime(vehicleId);
         int arrived = arrivedCount.incrementAndGet();
 
-        // Notificamos a la GUI
-        if (listener!= null) {
+        if (listener != null) {
             listener.onVehicleArrived(vehicleId, travelTime);
         }
 
-        // Llegaron todos llos vehiculos?
         if (arrived >= vehicleThreads.size()) {
             setState(SimulationState.FINISHED);
             if (listener != null) {
@@ -251,9 +218,8 @@ public class SimulationController {
         }
     }
 
-    // Genera las peticiones de ruta para cada vehiculo
-    // Los origenes y destinos se toman de los bordes del mapa
-    // para simular vehiculos entrando y saliendo de la ciudad.
+    // ── Generación de rutas ──────────────────────────────────────────────────
+
     private List<ParallelRouteTask.RouteRequest> generateRouteRequests() {
         List<Position> borderPositions = new ArrayList<>(getBorderPositions());
         Collections.shuffle(borderPositions, random);
@@ -264,8 +230,6 @@ public class SimulationController {
         for (int i = 0; i < count; i++) {
             Position start = borderPositions.get(i % borderPositions.size());
             Position end;
-
-            // Aseguramos que origen y destino sean diferentes
             do {
                 end = borderPositions.get(random.nextInt(borderPositions.size()));
             } while (end.equals(start));
@@ -276,83 +240,50 @@ public class SimulationController {
         return requests;
     }
 
-    // Devuelve todas las posiciones del borde de la cuadricula 12x12
-    // Son los puntos de entrada y salida de la ciudad
     private List<Position> getBorderPositions() {
         List<Position> borders = new ArrayList<>();
         int size = City.SIZE;
 
         for (int i = 0; i < size; i++) {
-            borders.add(new Position(0, i)); // Borde superior
-            borders.add(new Position(size - 1, i)); // Borde inferior
-            borders.add(new Position(i, 0)); // Borde izquierdo
-            borders.add(new Position(i, size - 1)); // Borde derecho
+            borders.add(new Position(0, i));
+            borders.add(new Position(size - 1, i));
+            borders.add(new Position(i, 0));
+            borders.add(new Position(i, size - 1));
         }
 
-        //Eliminamos duplicados de las esquinas
         return borders.stream().distinct().toList();
     }
 
-    // Reporte final en consola
+    // ── Reporte final ────────────────────────────────────────────────────────
+
     private void printFinalReport() {
         System.out.println("\n====== REPORTE FINAL ======");
-        System.out.printf("Vehículos completados : %d%n", arrivedCount.get());
-        System.out.printf("Primer en llegar      : Vehículo #%d%n",
-                metrics.getFirstArrival());
-        System.out.printf("Tiempo promedio viaje : %.0f ms%n",
-                metrics.getAverageTravelTime());
-        System.out.printf("Cálculo secuencial    : %d ms%n",
-                metrics.getSequentialRouteTime());
-        System.out.printf("Cálculo paralelo      : %d ms%n",
-                metrics.getParallelRoutime());
-        System.out.printf("Speedup               : %.2fx%n",
-                metrics.getSpeedup());
+        System.out.printf("Vehículos completados : %d%n",    arrivedCount.get());
+        System.out.printf("Primer en llegar      : Vehículo #%d%n", metrics.getFirstArrival());
+        System.out.printf("Tiempo promedio viaje : %.0f ms%n", metrics.getAverageTravelTime());
+        System.out.printf("Cálculo secuencial    : %d ms%n",  metrics.getSequentialRouteTime());
+        System.out.printf("Cálculo paralelo      : %d ms%n",  metrics.getParallelRoutime());
+        System.out.printf("Speedup               : %.2fx%n",  metrics.getSpeedup());
+        System.out.printf("Velocidad vehículos   : %d ms/celda%n", config.getMoveDelayMs());
         System.out.println("===========================\n");
     }
 
-    // Helpers de estado
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
     private void setState(SimulationState newState) {
         this.state = newState;
-        if (listener != null) {
-            listener.onStateChanged(newState);
-        }
+        if (listener != null) listener.onStateChanged(newState);
     }
 
-    // Getters para la GUI
+    // ── Getters para la GUI ──────────────────────────────────────────────────
 
-    public SimulationState getState() {
-        return state;
-    }
-
-    public List<VehicleThread> getVehicles() {
-        return vehicleThreads;
-    }
-
-    public List<TrafficLightThread> getLightThreads() {
-        return lightThreads;
-    }
-
-    public City getCity() {
-        return city;
-    }
-
-    public MetricsCollector getMetrics() {
-        return metrics;
-    }
-
-    public SimulationConfig getConfig() {
-        return config;
-    }
-
-    public int getArrivedCount() {
-        return arrivedCount.get();
-    }
-
-    public boolean isPaused() {
-        return paused;
-    }
-
-    public double getSpeedup() {
-        return routeCalculator.getSpeedup();
-    }
+    public SimulationState getState()                    { return state; }
+    public List<VehicleThread> getVehicles()             { return vehicleThreads; }
+    public List<TrafficLightThread> getLightThreads()    { return lightThreads; }
+    public City getCity()                                { return city; }
+    public MetricsCollector getMetrics()                 { return metrics; }
+    public SimulationConfig getConfig()                  { return config; }
+    public int getArrivedCount()                         { return arrivedCount.get(); }
+    public boolean isPaused()                            { return paused; }
+    public double getSpeedup()                           { return routeCalculator.getSpeedup(); }
 }
