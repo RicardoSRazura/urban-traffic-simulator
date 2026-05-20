@@ -4,9 +4,11 @@ import com.trafficsim.config.SimulationConfig;
 import com.trafficsim.controller.SimulationController;
 import com.trafficsim.controller.SimulationController.SimulationListener;
 import com.trafficsim.controller.SimulationState;
+import com.trafficsim.metrics.MetricsCollector;
 import com.trafficsim.model.City;
 import com.trafficsim.threads.TrafficLightThread;
 import com.trafficsim.threads.VehicleThread;
+import com.trafficsim.metrics.MetricsCollector;
 
 import java.util.List;
 
@@ -109,5 +111,9 @@ public class SimulationAdapter {
 
     public void setGuiListener(GuiListener listener) {
         this.guiListener = listener;
+    }
+
+        public MetricsCollector getMetrics() {
+        return controller != null ? controller.getMetrics() : null;
     }
 }

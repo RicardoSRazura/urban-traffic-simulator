@@ -14,8 +14,8 @@ public final class GuiConstants {
 
     // ── Grid / ciudad ────────────────────────────────────────────────────────
     public static final int GRID        = 12;
-    public static final int CELL        = 48;
-    public static final int GAP         = 8;
+    public static final int CELL        = 70;
+    public static final int GAP         = 5;
     public static final int ROAD_W      = CELL + GAP;
     public static final int CANVAS_SIZE = GRID * ROAD_W + GAP;
 

@@ -2,33 +2,28 @@ package com.trafficsim.metrics;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class MetricsCollector {
 
-    // ConcurrentHashMap es thread-safe: multiples vehiculos pueden
-    // escribir sus metricas al mismo tiempo sin syncronized manual.
     private final ConcurrentHashMap<Integer, Long> departureTimes = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Integer, Long> arrivalTimes = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Integer, Long> waitTimes = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, Long> arrivalTimes   = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, Long> waitTimes      = new ConcurrentHashMap<>();
 
-    private volatile long sequentialRouteTime;
-    private volatile long parallelRoutime;
+    private volatile long   sequentialRouteTime;
+    private volatile long   parallelRouteTime;
     private volatile double speedup;
 
-    public void recordDeparture(int vehicleId, long timeMs) {
-        departureTimes.put(vehicleId, timeMs);
-    }
+    private final AtomicInteger avoidedCollisions = new AtomicInteger(0);
+    private final AtomicInteger totalLightWaits   = new AtomicInteger(0);
+    private final AtomicInteger totalLockWaits    = new AtomicInteger(0);
 
-    public void recordArrival(int vehicleId, long timeMs) {
-        arrivalTimes.put(vehicleId, timeMs);
-    }
+    public void recordDeparture(int vehicleId, long timeMs) { departureTimes.put(vehicleId, timeMs); }
+    public void recordArrival(int vehicleId, long timeMs)   { arrivalTimes.put(vehicleId, timeMs); }
+    public void addWaitTime(int vehicleId, long waitMs)     { waitTimes.merge(vehicleId, waitMs, Long::sum); }
+    public void recordLightWait()  { totalLightWaits.incrementAndGet(); }
+    public void recordLockWait()   { totalLockWaits.incrementAndGet(); avoidedCollisions.incrementAndGet(); }
 
-    //Acumula tiempo de espera (Puede llamarse multiples veces por vehiculo)
-    public void addWaitTime(int vehicleId, long waitMs) {
-        waitTimes.merge(vehicleId, waitMs, Long::sum);
-    }
-
-    //Tiempo total de viaje de un vehiculo
     public long getTravelTime(int vehicleId) {
         Long dep = departureTimes.get(vehicleId);
         Long arr = arrivalTimes.get(vehicleId);
@@ -36,62 +31,66 @@ public class MetricsCollector {
         return arr - dep;
     }
 
-    // Metrica para saber cual vehiculo llego primero
     public int getFirstArrival() {
         return arrivalTimes.entrySet().stream()
                 .min(Map.Entry.comparingByValue())
-                .map(Map.Entry::getKey)
-                .orElse(-1);
+                .map(Map.Entry::getKey).orElse(-1);
     }
 
-    // Tiempo promedio de viaje de todos los vehiculos que llegaron
+    public long getFastestTravelTime() {
+        return arrivalTimes.keySet().stream().mapToLong(this::getTravelTime)
+                .filter(t -> t >= 0).min().orElse(0);
+    }
+
+    public long getSlowestTravelTime() {
+        return arrivalTimes.keySet().stream().mapToLong(this::getTravelTime)
+                .filter(t -> t >= 0).max().orElse(0);
+    }
+
     public double getAverageTravelTime() {
-        return arrivalTimes.keySet().stream()
-                .mapToLong(this::getTravelTime)
-                .filter(t -> t >= 0)
-                .average()
-                .orElse(0.0);
+        return arrivalTimes.keySet().stream().mapToLong(this::getTravelTime)
+                .filter(t -> t >= 0).average().orElse(0.0);
     }
 
-    // Tiempo total que un vehiculo paso esperando (semaforos + locks)
-    public long getWaitTime(int vehicleId) {
-        return waitTimes.getOrDefault(vehicleId, 0L);
+    public long getTotalWaitTime() {
+        return waitTimes.values().stream().mapToLong(Long::longValue).sum();
     }
 
-    public Map<Integer, Long> getAllArrivalTimes() { return arrivalTimes; }
-    public Map<Integer, Long> getAllWaitTimes() { return  waitTimes; }
-
-    public long getSequentialRouteTime() {
-        return sequentialRouteTime;
+    public double getAverageWaitTime() {
+        if (waitTimes.isEmpty()) return 0.0;
+        return waitTimes.values().stream().mapToLong(Long::longValue).average().orElse(0.0);
     }
 
-    public void setSequentialRouteTime(long sequentialRouteTime) {
-        this.sequentialRouteTime = sequentialRouteTime;
+    public double getCongestionIndex() {
+        double totalTravel = arrivalTimes.keySet().stream()
+                .mapToLong(this::getTravelTime).filter(t -> t >= 0).sum();
+        if (totalTravel == 0) return 0.0;
+        return (getTotalWaitTime() / totalTravel) * 100.0;
     }
 
-    public long getParallelRoutime() {
-        return parallelRoutime;
-    }
+    public long getWaitTime(int vehicleId)       { return waitTimes.getOrDefault(vehicleId, 0L); }
+    public int  getAvoidedCollisions()           { return avoidedCollisions.get(); }
+    public int  getTotalLightWaits()             { return totalLightWaits.get(); }
+    public int  getTotalLockWaits()              { return totalLockWaits.get(); }
+    public Map<Integer, Long> getAllArrivalTimes(){ return arrivalTimes; }
+    public Map<Integer, Long> getAllWaitTimes()   { return waitTimes; }
 
-    public void setParallelRoutime(long parallelRoutime) {
-        this.parallelRoutime = parallelRoutime;
-    }
+    public long   getSequentialRouteTime()       { return sequentialRouteTime; }
+    public void   setSequentialRouteTime(long t) { this.sequentialRouteTime = t; }
+    public long   getParallelRoutime()           { return parallelRouteTime; }
+    public void   setParallelRoutime(long t)     { this.parallelRouteTime = t; }
+    public double getSpeedup()                   { return speedup; }
+    public void   setSpeedup(double s)           { this.speedup = s; }
 
-    public double getSpeedup() {
-        return speedup;
-    }
-
-    public void setSpeedup(double speedup) {
-        this.speedup = speedup;
-    }
-
-    // Metodo reset para cuando el usuario reinicia la simulacion:
     public void reset() {
         departureTimes.clear();
         arrivalTimes.clear();
         waitTimes.clear();
+        avoidedCollisions.set(0);
+        totalLightWaits.set(0);
+        totalLockWaits.set(0);
         sequentialRouteTime = 0;
-        parallelRoutime = 0;
-        speedup = 0;
+        parallelRouteTime   = 0;
+        speedup             = 0;
     }
 }

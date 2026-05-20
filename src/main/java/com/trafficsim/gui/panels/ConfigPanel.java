@@ -44,7 +44,7 @@ public class ConfigPanel extends JPanel {
         add(title);
         add(Box.createRigidArea(new Dimension(0, 14)));
 
-        sldVehicles = addSlider("Vehículos",          5,   60,  30);
+        sldVehicles = addSlider("Vehículos",          5,   200,  30);
         sldGreenMs  = addSlider("Verde (s)",           1,   15,   5);
         sldYellowMs = addSlider("Amarillo (s)",        1,    5,   2);
         sldRedMs    = addSlider("Rojo (s)",            1,   15,   6);
