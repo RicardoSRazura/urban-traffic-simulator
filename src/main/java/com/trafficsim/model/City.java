@@ -127,8 +127,8 @@ public class City {
     public List<Position> getDefaultSemaphorePositions() {
         List<Position> positions = new ArrayList<>();
         //Coloca semaforos cada 3 nodos en filas/columnas interiores
-        for (int row = 2; row < SIZE - 1; row += 3) {
-            for (int col = 2; col < SIZE - 1; col += 3) {
+        for (int row = 1; row < SIZE - 1; row += 2) {
+            for (int col = 1; col < SIZE - 1; col += 2) {
                 positions.add(new Position(row, col));
             }
         }
